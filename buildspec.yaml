@@ -20,4 +20,4 @@ artifacts:
   files:
     - "**/*"
   discard-paths: no
-  base-directory: dist/angularapp
+  base-directory: dist/my-first-project
