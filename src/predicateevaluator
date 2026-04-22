@@ -1,0 +1,336 @@
+package com.getnet.resolution.engine;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.JsonNodeFactory;
+import com.getnet.resolution.model.Operator;
+import com.getnet.resolution.model.PredicateGroup;
+import com.getnet.resolution.model.PredicateMatchMode;
+import com.getnet.resolution.model.PredicateScope;
+import com.getnet.resolution.model.ResolutionRule;
+import com.getnet.resolution.model.RulePredicate;
+
+import java.math.BigDecimal;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+
+/**
+ * Evaluates declarative predicates against ROOT, PARENT and CURRENT.
+ *
+ * Key points of this version:
+ * - legacy predicates remain ALL by default
+ * - predicate groups support ALL / ANY composition
+ * - expectedTemplate can now represent:
+ *   1) interpolation template
+ *   2) JsonPath query executed against expectedScope
+ * - INTERSECTS supports array-vs-array matching
+ */
+final class PredicateEvaluator {
+
+    private final JsonPathQueryExecutor queryExecutor;
+    private final TemplateInterpolator templateInterpolator;
+
+    PredicateEvaluator(JsonPathQueryExecutor queryExecutor, TemplateInterpolator templateInterpolator) {
+        this.queryExecutor = queryExecutor;
+        this.templateInterpolator = templateInterpolator;
+    }
+
+    boolean matchesRule(ResolutionRule rule, JsonNode root, JsonNode parent, JsonNode current) {
+        if (!matchesAll(rule.predicates(), root, parent, current)) {
+            return false;
+        }
+
+        for (PredicateGroup group : rule.predicateGroups()) {
+            if (!matchesGroup(group, root, parent, current)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    boolean matchesAll(List<RulePredicate> predicates, JsonNode root, JsonNode parent, JsonNode current) {
+        if (predicates == null || predicates.isEmpty()) {
+            return true;
+        }
+
+        for (RulePredicate predicate : predicates) {
+            if (!matches(predicate, root, parent, current)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    boolean matchesGroup(PredicateGroup group, JsonNode root, JsonNode parent, JsonNode current) {
+        List<RulePredicate> predicates = group.predicates();
+        if (predicates == null || predicates.isEmpty()) {
+            return true;
+        }
+
+        if (group.mode() == PredicateMatchMode.ANY) {
+            for (RulePredicate predicate : predicates) {
+                if (matches(predicate, root, parent, current)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        return matchesAll(predicates, root, parent, current);
+    }
+
+    boolean matches(RulePredicate predicate, JsonNode root, JsonNode parent, JsonNode current) {
+        JsonNode scopedNode = resolveScopedNode(predicate.scope(), root, parent, current);
+
+        final List<JsonNode> actualValues;
+        try {
+            String resolvedPath = templateInterpolator.interpolatePath(predicate.path(), root, parent, current);
+            actualValues = queryExecutor.read(scopedNode, resolvedPath);
+        } catch (MissingInterpolationValueException ex) {
+            return false;
+        }
+
+        JsonNode expectedValue = resolveExpectedValue(predicate, root, parent, current);
+        return evaluate(predicate.operator(), actualValues, expectedValue);
+    }
+
+    private JsonNode resolveExpectedValue(RulePredicate predicate, JsonNode root, JsonNode parent, JsonNode current) {
+        if (predicate.expectedTemplate() == null || predicate.expectedTemplate().isBlank()) {
+            return predicate.expectedValue();
+        }
+
+        String expectedTemplate = predicate.expectedTemplate();
+
+        try {
+            // Case 1: expectedTemplate is a JsonPath query
+            if (looksLikeJsonPath(expectedTemplate)) {
+                JsonNode expectedSource = resolveScopedNode(predicate.expectedScope(), root, parent, current);
+                String resolvedExpectedPath = templateInterpolator.interpolatePath(expectedTemplate, root, parent, current);
+                List<JsonNode> values = queryExecutor.read(expectedSource, resolvedExpectedPath);
+                return collapseQueryResult(values);
+            }
+
+            // Case 2: expectedTemplate is a regular interpolation template
+            return templateInterpolator.interpolateTextTemplate(expectedTemplate, root, parent, current);
+        } catch (MissingInterpolationValueException ex) {
+            return null;
+        }
+    }
+
+    private JsonNode collapseQueryResult(List<JsonNode> values) {
+        if (values == null || values.isEmpty()) {
+            return JsonNodeFactory.instance.nullNode();
+        }
+
+        if (values.size() == 1) {
+            return values.get(0);
+        }
+
+        ArrayNode array = JsonNodeFactory.instance.arrayNode();
+        for (JsonNode value : values) {
+            array.add(value);
+        }
+        return array;
+    }
+
+    private boolean looksLikeJsonPath(String value) {
+        String trimmed = value.trim();
+        return trimmed.startsWith("$.") || "$".equals(trimmed);
+    }
+
+    private JsonNode resolveScopedNode(PredicateScope scope, JsonNode root, JsonNode parent, JsonNode current) {
+        return switch (scope) {
+            case ROOT -> root;
+            case PARENT -> parent;
+            case CURRENT -> current;
+        };
+    }
+
+    private boolean evaluate(Operator operator, List<JsonNode> actualValues, JsonNode expectedValue) {
+        return switch (operator) {
+            case EXISTS -> !actualValues.isEmpty() && actualValues.stream().anyMatch(this::isNotNull);
+            case NOT_EXISTS -> actualValues.isEmpty() || actualValues.stream().noneMatch(this::isNotNull);
+            case EQUALS -> anyEquals(actualValues, expectedValue);
+            case NOT_EQUALS -> !anyEquals(actualValues, expectedValue);
+            case IN -> anyIn(actualValues, expectedValue);
+            case NOT_IN -> !anyIn(actualValues, expectedValue);
+            case CONTAINS -> anyContains(actualValues, expectedValue);
+            case INTERSECTS -> anyIntersects(actualValues, expectedValue);
+            case GREATER_THAN -> anyNumericCompare(actualValues, expectedValue, c -> c > 0);
+            case GREATER_THAN_OR_EQUALS -> anyNumericCompare(actualValues, expectedValue, c -> c >= 0);
+            case LESS_THAN -> anyNumericCompare(actualValues, expectedValue, c -> c < 0);
+            case LESS_THAN_OR_EQUALS -> anyNumericCompare(actualValues, expectedValue, c -> c <= 0);
+        };
+    }
+
+    private boolean anyEquals(List<JsonNode> actualValues, JsonNode expectedValue) {
+        return actualValues.stream()
+                .filter(this::isNotNull)
+                .anyMatch(actual -> nodesEqual(actual, expectedValue));
+    }
+
+    private boolean anyIn(List<JsonNode> actualValues, JsonNode expectedValue) {
+        if (expectedValue == null || !expectedValue.isArray()) {
+            return false;
+        }
+
+        Set<String> expectedSet = new HashSet<>();
+        expectedValue.forEach(node -> expectedSet.add(normalizeComparableValue(node)));
+
+        return actualValues.stream()
+                .filter(this::isNotNull)
+                .map(this::normalizeComparableValue)
+                .anyMatch(expectedSet::contains);
+    }
+
+    private boolean anyContains(List<JsonNode> actualValues, JsonNode expectedValue) {
+        if (expectedValue == null || expectedValue.isNull()) {
+            return false;
+        }
+
+        for (JsonNode actual : actualValues) {
+            if (!isNotNull(actual)) {
+                continue;
+            }
+
+            if (actual.isArray()) {
+                for (JsonNode item : actual) {
+                    if (nodesEqual(item, expectedValue)) {
+                        return true;
+                    }
+                }
+                continue;
+            }
+
+            if (actual.isTextual() && expectedValue.isTextual()) {
+                if (actual.asText().contains(expectedValue.asText())) {
+                    return true;
+                }
+                continue;
+            }
+
+            if (nodesEqual(actual, expectedValue)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean anyIntersects(List<JsonNode> actualValues, JsonNode expectedValue) {
+        if (expectedValue == null || expectedValue.isNull()) {
+            return false;
+        }
+
+        Set<String> actualSet = new HashSet<>();
+        for (JsonNode actual : actualValues) {
+            collectComparableValues(actual, actualSet);
+        }
+
+        if (actualSet.isEmpty()) {
+            return false;
+        }
+
+        Set<String> expectedSet = new HashSet<>();
+        collectComparableValues(expectedValue, expectedSet);
+
+        if (expectedSet.isEmpty()) {
+            return false;
+        }
+
+        for (String value : actualSet) {
+            if (expectedSet.contains(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void collectComparableValues(JsonNode node, Set<String> target) {
+        if (!isNotNull(node)) {
+            return;
+        }
+
+        if (node.isArray()) {
+            for (JsonNode child : node) {
+                collectComparableValues(child, target);
+            }
+            return;
+        }
+
+        target.add(normalizeComparableValue(node));
+    }
+
+    private boolean anyNumericCompare(List<JsonNode> actualValues, JsonNode expectedValue, NumericComparator comparator) {
+        BigDecimal expected = asBigDecimal(expectedValue);
+        if (expected == null) {
+            return false;
+        }
+
+        for (JsonNode actual : actualValues) {
+            BigDecimal actualDecimal = asBigDecimal(actual);
+            if (actualDecimal != null && comparator.compare(actualDecimal.compareTo(expected))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean nodesEqual(JsonNode actual, JsonNode expected) {
+        if (!isNotNull(actual) || !isNotNull(expected)) {
+            return false;
+        }
+
+        BigDecimal left = asBigDecimal(actual);
+        BigDecimal right = asBigDecimal(expected);
+        if (left != null && right != null) {
+            return left.compareTo(right) == 0;
+        }
+
+        return Objects.equals(normalizeComparableValue(actual), normalizeComparableValue(expected));
+    }
+
+    private String normalizeComparableValue(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        if (node.isTextual()) {
+            return node.asText();
+        }
+        if (node.isNumber()) {
+            BigDecimal decimal = asBigDecimal(node);
+            return decimal == null ? node.asText() : decimal.stripTrailingZeros().toPlainString();
+        }
+        if (node.isBoolean()) {
+            return Boolean.toString(node.asBoolean());
+        }
+        return node.toString();
+    }
+
+    private BigDecimal asBigDecimal(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return null;
+        }
+        try {
+            if (node.isNumber()) {
+                return node.decimalValue();
+            }
+            if (node.isTextual()) {
+                return new BigDecimal(node.asText());
+            }
+            return null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private boolean isNotNull(JsonNode node) {
+        return node != null && !node.isNull() && !node.isMissingNode();
+    }
+
+    @FunctionalInterface
+    private interface NumericComparator {
+        boolean compare(int result);
+    }
+}
