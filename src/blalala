@@ -1,0 +1,40 @@
+
+import java.util.List;
+
+/**
+ * One unit of behavior inside a resolution config.
+ *
+ * <p>Execution model:</p>
+ * <ol>
+ *     <li>contextPath selects outer containers (optional)</li>
+ *     <li>selectionPath selects the working items inside each container</li>
+ *     <li>predicates and predicateGroups decide whether each item is valid</li>
+ *     <li>actions materialize the final output</li>
+ * </ol>
+ */
+public record ResolutionRule(
+        String id,
+        Integer priority,
+        String contextPath,
+        String selectionPath,
+        List<PredicateGroup> predicateGroups,
+        List<RulePredicate> predicates,
+        List<ActionTemplate> actions
+) {
+    public ResolutionRule {
+        predicateGroups = predicateGroups == null ? List.of() : List.copyOf(predicateGroups);
+        predicates = predicates == null ? List.of() : List.copyOf(predicates);
+        actions = actions == null ? List.of() : List.copyOf(actions);
+        priority = priority == null ? 0 : priority;
+    }
+
+    public ResolutionRule(
+            String id,
+            Integer priority,
+            String selectionPath,
+            List<RulePredicate> predicates,
+            List<ActionTemplate> actions
+    ) {
+        this(id, priority, null, selectionPath, List.of(), predicates, actions);
+    }
+}
