@@ -1,40 +1,119 @@
+@Test
+void matchesRuleMatchesAllAndMatchesGroupCoverMainFlows() {
+    JsonNode root = json("""
+            {
+              "flag": "go",
+              "allowed": ["online", "pos"]
+            }
+            """);
 
-import java.util.List;
+    JsonNode parent = json("""
+            {
+              "channel": "online"
+            }
+            """);
 
-/**
- * One unit of behavior inside a resolution config.
- *
- * <p>Execution model:</p>
- * <ol>
- *     <li>contextPath selects outer containers (optional)</li>
- *     <li>selectionPath selects the working items inside each container</li>
- *     <li>predicates and predicateGroups decide whether each item is valid</li>
- *     <li>actions materialize the final output</li>
- * </ol>
- */
-public record ResolutionRule(
-        String id,
-        Integer priority,
-        String contextPath,
-        String selectionPath,
-        List<PredicateGroup> predicateGroups,
-        List<RulePredicate> predicates,
-        List<ActionTemplate> actions
-) {
-    public ResolutionRule {
-        predicateGroups = predicateGroups == null ? List.of() : List.copyOf(predicateGroups);
-        predicates = predicates == null ? List.of() : List.copyOf(predicates);
-        actions = actions == null ? List.of() : List.copyOf(actions);
-        priority = priority == null ? 0 : priority;
-    }
+    JsonNode current = json("""
+            {
+              "status": "approved",
+              "amount": 10
+            }
+            """);
 
-    public ResolutionRule(
-            String id,
-            Integer priority,
-            String selectionPath,
-            List<RulePredicate> predicates,
-            List<ActionTemplate> actions
-    ) {
-        this(id, priority, null, selectionPath, List.of(), predicates, actions);
-    }
+    RulePredicate legacy = new RulePredicate(
+            PredicateScope.CURRENT,
+            "$.status",
+            Operator.EQUALS,
+            text("\"approved\"")
+    );
+
+    PredicateGroup allGroup = new PredicateGroup(
+            PredicateMatchMode.ALL,
+            List.of(new RulePredicate(
+                    PredicateScope.ROOT,
+                    "$.flag",
+                    Operator.EQUALS,
+                    text("\"go\"")
+            ))
+    );
+
+    PredicateGroup anyGroup = new PredicateGroup(
+            PredicateMatchMode.ANY,
+            List.of(
+                    new RulePredicate(
+                            PredicateScope.PARENT,
+                            "$.channel",
+                            Operator.EQUALS,
+                            text("\"offline\"")
+                    ),
+                    new RulePredicate(
+                            PredicateScope.CURRENT,
+                            "$.amount",
+                            Operator.GREATER_THAN,
+                            text("5")
+                    )
+            )
+    );
+
+    ResolutionRule success = new ResolutionRule(
+            "r1",
+            10,
+            null,
+            "$.ignored",
+            List.of(allGroup, anyGroup),
+            List.of(legacy),
+            List.of(new ActionTemplate("URL", objectNode("{\"k\":\"v\"}")))
+    );
+
+    assertTrue(evaluator.matchesRule(success, root, parent, current));
+    assertTrue(evaluator.matchesAll(null, root, parent, current));
+    assertTrue(evaluator.matchesAll(List.of(), root, parent, current));
+    assertTrue(evaluator.matchesGroup(new PredicateGroup(PredicateMatchMode.ALL, List.of()), root, parent, current));
+
+    PredicateGroup failingAny = new PredicateGroup(
+            PredicateMatchMode.ANY,
+            List.of(
+                    new RulePredicate(
+                            PredicateScope.PARENT,
+                            "$.channel",
+                            Operator.EQUALS,
+                            text("\"offline\"")
+                    ),
+                    new RulePredicate(
+                            PredicateScope.CURRENT,
+                            "$.amount",
+                            Operator.LESS_THAN,
+                            text("0")
+                    )
+            )
+    );
+
+    ResolutionRule failByGroup = new ResolutionRule(
+            "r2",
+            10,
+            null,
+            "$.ignored",
+            List.of(failingAny),
+            List.of(legacy),
+            List.of()
+    );
+
+    assertFalse(evaluator.matchesRule(failByGroup, root, parent, current));
+
+    ResolutionRule failByLegacy = new ResolutionRule(
+            "r3",
+            10,
+            null,
+            "$.ignored",
+            List.of(anyGroup),
+            List.of(new RulePredicate(
+                    PredicateScope.CURRENT,
+                    "$.status",
+                    Operator.EQUALS,
+                    text("\"rejected\"")
+            )),
+            List.of()
+    );
+
+    assertFalse(evaluator.matchesRule(failByLegacy, root, parent, current));
 }
