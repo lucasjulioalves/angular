@@ -1,0 +1,208 @@
+package com.getnet.resolution.engine;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.NullNode;
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+class TemplateInterpolatorCoverageTest {
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final TemplateInterpolator interpolator = new TemplateInterpolator(objectMapper);
+
+    @Test
+    void interpolateCoversNullObjectArrayScalarAndOverload() {
+        JsonNode root = json("""
+                {
+                  "customer": {
+                    "name": "O'Brien",
+                    "code": "A\\\\B"
+                  },
+                  "qty": 7,
+                  "flag": true,
+                  "a": {
+                    "b": "deep-root"
+                  }
+                }
+                """);
+
+        JsonNode parent = json("""
+                {
+                  "name": "parent-name",
+                  "code": "parent-code",
+                  "items": ["x", "y"]
+                }
+                """);
+
+        JsonNode current = json("""
+                {
+                  "id": 123,
+                  "name": "current-name",
+                  "obj": {
+                    "k": "v"
+                  },
+                  "items": [
+                    { "v": "one" },
+                    { "v": "two" }
+                  ]
+                }
+                """);
+
+        JsonNode template = json("""
+                {
+                  "plain": "abc",
+                  "scalarFull": "${value.id}",
+                  "mixed": "${parent.name}-${customer.name}",
+                  "objectFull": "${value.obj}",
+                  "parentFull": "${parent}",
+                  "rootFull": "${root}",
+                  "array": [
+                    "${root.flag}",
+                    "${parent.items[1]}",
+                    { "deep": "${value.items[0].v}" },
+                    10
+                  ],
+                  "bool": true
+                }
+                """);
+
+        JsonNode result = interpolator.interpolate(template, root, parent, current);
+
+        assertEquals("abc", result.get("plain").asText());
+        assertEquals(123, result.get("scalarFull").asInt());
+        assertEquals("parent-name-O'Brien", result.get("mixed").asText());
+        assertEquals("v", result.get("objectFull").get("k").asText());
+        assertEquals("parent-name", result.get("parentFull").get("name").asText());
+        assertEquals("O'Brien", result.get("rootFull").get("customer").get("name").asText());
+        assertTrue(result.get("array").get(0).asBoolean());
+        assertEquals("y", result.get("array").get(1).asText());
+        assertEquals("one", result.get("array").get(2).get("deep").asText());
+        assertEquals(10, result.get("array").get(3).asInt());
+        assertTrue(result.get("bool").asBoolean());
+
+        assertEquals(NullNode.getInstance(), interpolator.interpolate(null, root, parent, current));
+
+        JsonNode overload = interpolator.interpolate(json("\"${parent.customer.code}\""), root, current);
+        assertEquals("A\\B", overload.asText());
+    }
+
+    @Test
+    void interpolateTextTemplateAndInterpolatePathCoverHappyPaths() {
+        JsonNode root = json("""
+                {
+                  "customer": {
+                    "name": "O'Brien",
+                    "code": "A\\\\B"
+                  },
+                  "qty": 7,
+                  "a": {
+                    "b": "deep-root"
+                  }
+                }
+                """);
+
+        JsonNode parent = json("""
+                {
+                  "name": "parent-name",
+                  "code": "parent-code",
+                  "items": ["x", "y"]
+                }
+                """);
+
+        JsonNode current = json("""
+                {
+                  "id": 123,
+                  "name": "current-name",
+                  "obj": {
+                    "k": "v"
+                  }
+                }
+                """);
+
+        JsonNode fullObject = interpolator.interpolateTextTemplate("${value}", root, parent, current);
+        assertEquals("v", fullObject.get("obj").get("k").asText());
+
+        JsonNode mixed = interpolator.interpolateTextTemplate("pre-${value.id}-post", root, parent, current);
+        assertEquals("pre-123-post", mixed.asText());
+
+        JsonNode noPlaceholder = interpolator.interpolateTextTemplate("plain-text", root, parent, current);
+        assertEquals("plain-text", noPlaceholder.asText());
+
+        JsonNode doubleDot = interpolator.interpolateTextTemplate("${root.a..b}", root, parent, current);
+        assertEquals("deep-root", doubleDot.asText());
+
+        assertNull(interpolator.interpolatePath(null, root, parent, current));
+        assertEquals("   ", interpolator.interpolatePath("   ", root, parent, current));
+        assertEquals("$.fixed.path", interpolator.interpolatePath("$.fixed.path", root, parent, current));
+
+        String path = interpolator.interpolatePath(
+                "$.items[?(@.name == '${root.customer.name}' && @.code == '${root.customer.code}' && @.qty == ${root.qty})]",
+                root,
+                parent,
+                current
+        );
+        assertEquals("$.items[?(@.name == 'O\\'Brien' && @.code == 'A\\\\B' && @.qty == 7)]", path);
+
+        String overload = interpolator.interpolatePath("$.items[?(@.code == '${parent.customer.code}')]", root, current);
+        assertEquals("$.items[?(@.code == 'A\\\\B')]", overload);
+    }
+
+    @Test
+    void interpolateThrowsForMissingValuesNonScalarEmbedsAndInvalidIndexes() {
+        JsonNode root = json("""
+                {
+                  "customer": {
+                    "name": "root-name"
+                  }
+                }
+                """);
+
+        JsonNode parent = json("""
+                {
+                  "name": "parent-name"
+                }
+                """);
+
+        JsonNode current = json("""
+                {
+                  "obj": {
+                    "k": "v"
+                  },
+                  "items": [
+                    { "v": "one" }
+                  ]
+                }
+                """);
+
+        assertThrows(MissingInterpolationValueException.class,
+                () -> interpolator.interpolateTextTemplate("x${value.obj}y", root, parent, current));
+
+        assertThrows(MissingInterpolationValueException.class,
+                () -> interpolator.interpolateTextTemplate("${missing}", root, parent, current));
+
+        assertThrows(MissingInterpolationValueException.class,
+                () -> interpolator.interpolateTextTemplate("${parent.name}", root, null, current));
+
+        assertThrows(MissingInterpolationValueException.class,
+                () -> interpolator.interpolateTextTemplate("${value.items[]}", root, parent, current));
+
+        assertThrows(MissingInterpolationValueException.class,
+                () -> interpolator.interpolateTextTemplate("${value.items[abc]}", root, parent, current));
+
+        assertThrows(MissingInterpolationValueException.class,
+                () -> interpolator.interpolateTextTemplate("${value.items[0}", root, parent, current));
+
+        assertThrows(MissingInterpolationValueException.class,
+                () -> interpolator.interpolatePath("$[?(@ == '${value}')]", root, parent, current));
+    }
+
+    private JsonNode json(String value) {
+        try {
+            return objectMapper.readTree(value);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+}
