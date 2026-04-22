@@ -1,0 +1,41 @@
+package com.getnet.resolution.model;
+
+import com.fasterxml.jackson.databind.JsonNode;
+
+/**
+ * Declarative condition evaluated against ROOT, PARENT or CURRENT.
+ *
+ * expectedValue:
+ * - fixed/static value from config
+ *
+ * expectedTemplate:
+ * - dynamic value resolved at runtime
+ * - can be:
+ *   1) interpolation text/template, ex: "${value.product_id}"
+ *   2) JsonPath query, ex: "$.offering.items[*].product.transaction_channel_types[*]"
+ *
+ * expectedScope:
+ * - defines the node used when expectedTemplate is a JsonPath query
+ * - defaults to ROOT for backward compatibility
+ */
+public record RulePredicate(
+        PredicateScope scope,
+        String path,
+        Operator operator,
+        JsonNode expectedValue,
+        String expectedTemplate,
+        PredicateScope expectedScope
+) {
+    public RulePredicate {
+        scope = scope == null ? PredicateScope.CURRENT : scope;
+        expectedScope = expectedScope == null ? PredicateScope.ROOT : expectedScope;
+    }
+
+    public RulePredicate(PredicateScope scope, String path, Operator operator, JsonNode expectedValue) {
+        this(scope, path, operator, expectedValue, null, PredicateScope.ROOT);
+    }
+
+    public RulePredicate(PredicateScope scope, String path, Operator operator, JsonNode expectedValue, String expectedTemplate) {
+        this(scope, path, operator, expectedValue, expectedTemplate, PredicateScope.ROOT);
+    }
+}
