@@ -1,119 +1,555 @@
-@Test
-void matchesRuleMatchesAllAndMatchesGroupCoverMainFlows() {
-    JsonNode root = json("""
-            {
-              "flag": "go",
-              "allowed": ["online", "pos"]
-            }
-            """);
+import org.junit.jupiter.api.Test;
 
-    JsonNode parent = json("""
-            {
-              "channel": "online"
-            }
-            """);
+import java.lang.reflect.Method;
+import java.util.List;
 
-    JsonNode current = json("""
-            {
-              "status": "approved",
-              "amount": 10
-            }
-            """);
+import static org.junit.jupiter.api.Assertions.*;
 
-    RulePredicate legacy = new RulePredicate(
-            PredicateScope.CURRENT,
-            "$.status",
-            Operator.EQUALS,
-            text("\"approved\"")
-    );
+class PredicateEvaluatorCoverageTest {
 
-    PredicateGroup allGroup = new PredicateGroup(
-            PredicateMatchMode.ALL,
-            List.of(new RulePredicate(
-                    PredicateScope.ROOT,
-                    "$.flag",
-                    Operator.EQUALS,
-                    text("\"go\"")
-            ))
-    );
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final JsonPathQueryExecutor queryExecutor = new JsonPathQueryExecutor(objectMapper);
+    private final TemplateInterpolator templateInterpolator = new TemplateInterpolator(objectMapper);
+    private final PredicateEvaluator evaluator = new PredicateEvaluator(queryExecutor, templateInterpolator);
 
-    PredicateGroup anyGroup = new PredicateGroup(
-            PredicateMatchMode.ANY,
-            List.of(
-                    new RulePredicate(
-                            PredicateScope.PARENT,
-                            "$.channel",
-                            Operator.EQUALS,
-                            text("\"offline\"")
-                    ),
-                    new RulePredicate(
-                            PredicateScope.CURRENT,
-                            "$.amount",
-                            Operator.GREATER_THAN,
-                            text("5")
-                    )
-            )
-    );
+    @Test
+    void matchesRuleMatchesAllAndMatchesGroupCoverMainFlows() {
+        JsonNode root = json("""
+                {
+                  "flag": "go",
+                  "allowed": ["online", "pos"]
+                }
+                """);
 
-    ResolutionRule success = new ResolutionRule(
-            "r1",
-            10,
-            null,
-            "$.ignored",
-            List.of(allGroup, anyGroup),
-            List.of(legacy),
-            List.of(new ActionTemplate("URL", objectNode("{\"k\":\"v\"}")))
-    );
+        JsonNode parent = json("""
+                {
+                  "channel": "online"
+                }
+                """);
 
-    assertTrue(evaluator.matchesRule(success, root, parent, current));
-    assertTrue(evaluator.matchesAll(null, root, parent, current));
-    assertTrue(evaluator.matchesAll(List.of(), root, parent, current));
-    assertTrue(evaluator.matchesGroup(new PredicateGroup(PredicateMatchMode.ALL, List.of()), root, parent, current));
+        JsonNode current = json("""
+                {
+                  "status": "approved",
+                  "amount": 10
+                }
+                """);
 
-    PredicateGroup failingAny = new PredicateGroup(
-            PredicateMatchMode.ANY,
-            List.of(
-                    new RulePredicate(
-                            PredicateScope.PARENT,
-                            "$.channel",
-                            Operator.EQUALS,
-                            text("\"offline\"")
-                    ),
-                    new RulePredicate(
-                            PredicateScope.CURRENT,
-                            "$.amount",
-                            Operator.LESS_THAN,
-                            text("0")
-                    )
-            )
-    );
+        RulePredicate legacy = new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.status",
+                Operator.EQUALS,
+                text("\"approved\"")
+        );
 
-    ResolutionRule failByGroup = new ResolutionRule(
-            "r2",
-            10,
-            null,
-            "$.ignored",
-            List.of(failingAny),
-            List.of(legacy),
-            List.of()
-    );
+        PredicateGroup allGroup = new PredicateGroup(
+                PredicateMatchMode.ALL,
+                List.of(new RulePredicate(
+                        PredicateScope.ROOT,
+                        "$.flag",
+                        Operator.EQUALS,
+                        text("\"go\"")
+                ))
+        );
 
-    assertFalse(evaluator.matchesRule(failByGroup, root, parent, current));
+        PredicateGroup anyGroup = new PredicateGroup(
+                PredicateMatchMode.ANY,
+                List.of(
+                        new RulePredicate(
+                                PredicateScope.PARENT,
+                                "$.channel",
+                                Operator.EQUALS,
+                                text("\"offline\"")
+                        ),
+                        new RulePredicate(
+                                PredicateScope.CURRENT,
+                                "$.amount",
+                                Operator.GREATER_THAN,
+                                text("5")
+                        )
+                )
+        );
 
-    ResolutionRule failByLegacy = new ResolutionRule(
-            "r3",
-            10,
-            null,
-            "$.ignored",
-            List.of(anyGroup),
-            List.of(new RulePredicate(
-                    PredicateScope.CURRENT,
-                    "$.status",
-                    Operator.EQUALS,
-                    text("\"rejected\"")
-            )),
-            List.of()
-    );
+        ResolutionRule success = new ResolutionRule(
+                "r1",
+                10,
+                null,
+                "$.ignored",
+                List.of(allGroup, anyGroup),
+                List.of(legacy),
+                List.of(new ActionTemplate("URL", objectNode("{\"k\":\"v\"}")))
+        );
 
-    assertFalse(evaluator.matchesRule(failByLegacy, root, parent, current));
+        assertTrue(evaluator.matchesRule(success, root, parent, current));
+        assertTrue(evaluator.matchesAll(null, root, parent, current));
+        assertTrue(evaluator.matchesAll(List.of(), root, parent, current));
+        assertTrue(evaluator.matchesGroup(new PredicateGroup(PredicateMatchMode.ALL, List.of()), root, parent, current));
+
+        PredicateGroup failingAny = new PredicateGroup(
+                PredicateMatchMode.ANY,
+                List.of(
+                        new RulePredicate(
+                                PredicateScope.PARENT,
+                                "$.channel",
+                                Operator.EQUALS,
+                                text("\"offline\"")
+                        ),
+                        new RulePredicate(
+                                PredicateScope.CURRENT,
+                                "$.amount",
+                                Operator.LESS_THAN,
+                                text("0")
+                        )
+                )
+        );
+
+        ResolutionRule failByGroup = new ResolutionRule(
+                "r2",
+                10,
+                null,
+                "$.ignored",
+                List.of(failingAny),
+                List.of(legacy),
+                List.of()
+        );
+
+        assertFalse(evaluator.matchesRule(failByGroup, root, parent, current));
+
+        ResolutionRule failByLegacy = new ResolutionRule(
+                "r3",
+                10,
+                null,
+                "$.ignored",
+                List.of(anyGroup),
+                List.of(new RulePredicate(
+                        PredicateScope.CURRENT,
+                        "$.status",
+                        Operator.EQUALS,
+                        text("\"rejected\"")
+                )),
+                List.of()
+        );
+
+        assertFalse(evaluator.matchesRule(failByLegacy, root, parent, current));
+
+        PredicateGroup allFalse = new PredicateGroup(
+                PredicateMatchMode.ALL,
+                List.of(
+                        new RulePredicate(
+                                PredicateScope.CURRENT,
+                                "$.status",
+                                Operator.EQUALS,
+                                text("\"approved\"")
+                        ),
+                        new RulePredicate(
+                                PredicateScope.CURRENT,
+                                "$.amount",
+                                Operator.LESS_THAN,
+                                text("0")
+                        )
+                )
+        );
+
+        assertFalse(evaluator.matchesGroup(allFalse, root, parent, current));
+    }
+
+    @Test
+    void matchesCoversOperatorsAndScopes() {
+        JsonNode root = json("""
+                {
+                  "flag": "go",
+                  "statusRoot": "approved",
+                  "allowed": ["approved", "pending"],
+                  "bools": [true]
+                }
+                """);
+
+        JsonNode parent = json("""
+                {
+                  "channel": "online",
+                  "code": "P1"
+                }
+                """);
+
+        JsonNode current = json("""
+                {
+                  "status": "approved",
+                  "numAsText": "1.0",
+                  "arr": ["a", "b"],
+                  "text": "hello",
+                  "gt": 6,
+                  "lt": 4,
+                  "formatted": "prefix-X",
+                  "code": "X",
+                  "flag": true
+                }
+                """);
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.status",
+                Operator.EXISTS,
+                null
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.missing",
+                Operator.NOT_EXISTS,
+                null
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.numAsText",
+                Operator.EQUALS,
+                text("1")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.status",
+                Operator.NOT_EQUALS,
+                text("\"rejected\"")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.status",
+                Operator.IN,
+                text("[\"approved\", \"pending\"]")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.status",
+                Operator.NOT_IN,
+                text("[\"rejected\"]")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.arr",
+                Operator.CONTAINS,
+                text("\"b\"")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.text",
+                Operator.CONTAINS,
+                text("\"ell\"")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.gt",
+                Operator.GREATER_THAN,
+                text("5")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.gt",
+                Operator.GREATER_THAN_OR_EQUALS,
+                text("6")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.lt",
+                Operator.LESS_THAN,
+                text("5")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.lt",
+                Operator.LESS_THAN_OR_EQUALS,
+                text("4")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.formatted",
+                Operator.EQUALS,
+                null,
+                "prefix-${value.code}"
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.ROOT,
+                "$.flag",
+                Operator.EQUALS,
+                text("\"go\"")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.PARENT,
+                "$.channel",
+                Operator.EQUALS,
+                text("\"online\"")
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.status",
+                Operator.EQUALS,
+                text("\"approved\""),
+                "   "
+        ), root, parent, current));
+
+        assertFalse(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.items[?(@ == '${value.missing}')]",
+                Operator.EXISTS,
+                null
+        ), root, parent, current));
+
+        assertTrue(evaluator.matches(new RulePredicate(
+                PredicateScope.CURRENT,
+                "$.flag",
+                Operator.IN,
+                text("[true]")
+        ), root, parent, current));
+    }
+
+    @Test
+    void privateBranchesAreCoveredViaReflection() {
+        JsonNode root = json("""
+                {
+                  "single": "single-value",
+                  "objectValue": {
+                    "a": 1
+                  }
+                }
+                """);
+
+        JsonNode parent = json("""
+                {
+                  "channel": "online"
+                }
+                """);
+
+        JsonNode current = json("""
+                {
+                  "status": "approved",
+                  "flag": true,
+                  "obj": {
+                    "a": 1
+                  }
+                }
+                """);
+
+        JsonNode blankExpected = (JsonNode) invoke(
+                evaluator,
+                "resolveExpectedValue",
+                new Class[]{RulePredicate.class, JsonNode.class, JsonNode.class, JsonNode.class},
+                new RulePredicate(
+                        PredicateScope.CURRENT,
+                        "$.ignored",
+                        Operator.EQUALS,
+                        text("\"fallback\""),
+                        "   "
+                ),
+                root,
+                parent,
+                current
+        );
+        assertEquals("fallback", blankExpected.asText());
+
+        JsonNode dynamicExpected = (JsonNode) invoke(
+                evaluator,
+                "resolveExpectedValue",
+                new Class[]{RulePredicate.class, JsonNode.class, JsonNode.class, JsonNode.class},
+                new RulePredicate(
+                        PredicateScope.CURRENT,
+                        "$.ignored",
+                        Operator.EQUALS,
+                        null,
+                        "${root.single}"
+                ),
+                root,
+                parent,
+                current
+        );
+        assertEquals("single-value", dynamicExpected.asText());
+
+        JsonNode missingExpected = (JsonNode) invoke(
+                evaluator,
+                "resolveExpectedValue",
+                new Class[]{RulePredicate.class, JsonNode.class, JsonNode.class, JsonNode.class},
+                new RulePredicate(
+                        PredicateScope.CURRENT,
+                        "$.ignored",
+                        Operator.EQUALS,
+                        null,
+                        "${value.missing}"
+                ),
+                root,
+                parent,
+                current
+        );
+        assertNull(missingExpected);
+
+        assertFalse((Boolean) invoke(
+                evaluator,
+                "evaluate",
+                new Class[]{Operator.class, List.class, JsonNode.class},
+                Operator.CONTAINS,
+                List.of(text("\"abc\"")),
+                JsonNodeFactory.instance.nullNode()
+        ));
+
+        assertFalse((Boolean) invoke(
+                evaluator,
+                "evaluate",
+                new Class[]{Operator.class, List.class, JsonNode.class},
+                Operator.IN,
+                List.of(text("\"a\"")),
+                text("\"a\"")
+        ));
+
+        assertFalse((Boolean) invoke(
+                evaluator,
+                "evaluate",
+                new Class[]{Operator.class, List.class, JsonNode.class},
+                Operator.EQUALS,
+                List.of(JsonNodeFactory.instance.nullNode()),
+                text("\"a\"")
+        ));
+
+        assertFalse((Boolean) invoke(
+                evaluator,
+                "evaluate",
+                new Class[]{Operator.class, List.class, JsonNode.class},
+                Operator.CONTAINS,
+                List.of(JsonNodeFactory.instance.nullNode(), text("\"zzz\"")),
+                text("\"x\"")
+        ));
+
+        assertTrue((Boolean) invoke(
+                evaluator,
+                "evaluate",
+                new Class[]{Operator.class, List.class, JsonNode.class},
+                Operator.CONTAINS,
+                List.of(objectNode("{\"a\":1}")),
+                objectNode("{\"a\":1}")
+        ));
+
+        assertFalse((Boolean) invoke(
+                evaluator,
+                "evaluate",
+                new Class[]{Operator.class, List.class, JsonNode.class},
+                Operator.GREATER_THAN,
+                List.of(text("\"abc\"")),
+                text("\"zzz\"")
+        ));
+
+        assertFalse((Boolean) invoke(
+                evaluator,
+                "evaluate",
+                new Class[]{Operator.class, List.class, JsonNode.class},
+                Operator.GREATER_THAN,
+                List.of(text("\"abc\"")),
+                text("5")
+        ));
+
+        assertFalse((Boolean) invoke(
+                evaluator,
+                "evaluate",
+                new Class[]{Operator.class, List.class, JsonNode.class},
+                Operator.EQUALS,
+                List.of(text("2")),
+                text("1")
+        ));
+
+        assertNull(invoke(
+                evaluator,
+                "normalizeComparableValue",
+                new Class[]{JsonNode.class},
+                JsonNodeFactory.instance.nullNode()
+        ));
+
+        assertEquals("true", invoke(
+                evaluator,
+                "normalizeComparableValue",
+                new Class[]{JsonNode.class},
+                text("true")
+        ));
+
+        assertEquals("{\"a\":1}", invoke(
+                evaluator,
+                "normalizeComparableValue",
+                new Class[]{JsonNode.class},
+                objectNode("{\"a\":1}")
+        ));
+
+        assertNull(invoke(
+                evaluator,
+                "asBigDecimal",
+                new Class[]{JsonNode.class},
+                JsonNodeFactory.instance.nullNode()
+        ));
+
+        assertEquals("7", invoke(
+                evaluator,
+                "asBigDecimal",
+                new Class[]{JsonNode.class},
+                text("7")
+        ).toString());
+
+        assertNull(invoke(
+                evaluator,
+                "asBigDecimal",
+                new Class[]{JsonNode.class},
+                objectNode("{\"a\":1}")
+        ));
+
+        assertNull(invoke(
+                evaluator,
+                "asBigDecimal",
+                new Class[]{JsonNode.class},
+                text("\"abc\"")
+        ));
+
+        assertTrue((Boolean) invoke(
+                evaluator,
+                "isNotNull",
+                new Class[]{JsonNode.class},
+                text("\"x\"")
+        ));
+
+        assertFalse((Boolean) invoke(
+                evaluator,
+                "isNotNull",
+                new Class[]{JsonNode.class},
+                JsonNodeFactory.instance.nullNode()
+        ));
+    }
+
+    private Object invoke(Object target, String methodName, Class<?>[] parameterTypes, Object... args) {
+        try {
+            Method method = target.getClass().getDeclaredMethod(methodName, parameterTypes);
+            method.setAccessible(true);
+            return method.invoke(target, args);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private JsonNode json(String value) {
+        try {
+            return objectMapper.readTree(value);
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private JsonNode text(String value) {
+        return json(value);
+    }
+
+    private JsonNode objectNode(String value) {
+        return json(value);
+    }
 }
